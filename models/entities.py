@@ -162,6 +162,8 @@ class Deal(Base):
     )
 
     cargo: Mapped["Cargo"] = relationship(back_populates="deals")
+    shipper: Mapped["User"] = relationship(foreign_keys=[shipper_id])
+    carrier: Mapped["User"] = relationship(foreign_keys=[carrier_id])
 
 
 class Review(Base):

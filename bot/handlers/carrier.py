@@ -7,11 +7,19 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
 from agents.orchestrator import AgentOrchestrator
 from bot.keyboards.main import MAIN_MENU_CARRIER, vehicle_type_keyboard
 from models.database import async_session
 from models.entities import VehicleType
-from services.cargo_service import add_vehicle, get_active_cargos, get_user
+from services.cargo_service import (
+    add_vehicle,
+    delete_vehicle,
+    get_active_cargos,
+    get_user,
+    get_user_vehicles,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -66,12 +74,70 @@ async def find_cargos(message: Message) -> None:
 
 
 @router.message(F.text == "🅿️ Мои машины")
-async def my_vehicles(message: Message, state: FSMContext) -> None:
-    await state.set_state(AddVehicle.waiting_type)
+async def my_vehicles(message: Message) -> None:
+    async with async_session() as session:
+        user = await get_user(session, message.from_user.id)
+        if not user:
+            await message.answer("Сначала зарегистрируйтесь: /start")
+            return
+        vehicles = await get_user_vehicles(session, user.id)
+
+    buttons = [
+        [InlineKeyboardButton(text="➕ Добавить машину", callback_data="add_vehicle")]
+    ]
+
+    if not vehicles:
+        await message.answer(
+            "🅿️ У вас пока нет машин.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+        return
+
+    lines = ["🅿️ <b>Ваши машины:</b>\n"]
+    for v in vehicles:
+        avail = "🟢" if v.is_available else "🔴"
+        lines.append(
+            f"{avail} #{v.id} {v.vehicle_type.value} | {v.max_weight_tons} т\n"
+            f"  🏙 {v.current_city or '?'} → {v.destination_city or 'любое'}\n"
+        )
+        buttons.append(
+            [InlineKeyboardButton(
+                text=f"🗑 Удалить #{v.id}",
+                callback_data=f"del_vehicle_{v.id}",
+            )]
+        )
+
     await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+@router.callback_query(F.data == "add_vehicle")
+async def start_add_vehicle(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AddVehicle.waiting_type)
+    await callback.message.answer(
         "🚛 Добавьте машину.\nВыберите тип кузова:",
         reply_markup=vehicle_type_keyboard("add_vtype"),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("del_vehicle_"))
+async def on_delete_vehicle(callback: CallbackQuery) -> None:
+    vid = int(callback.data.replace("del_vehicle_", ""))
+    async with async_session() as session:
+        user = await get_user(session, callback.from_user.id)
+        if not user:
+            await callback.answer("Ошибка")
+            return
+        ok = await delete_vehicle(session, vid, user.id)
+    if ok:
+        await callback.message.answer(f"🗑 Машина #{vid} удалена.")
+    else:
+        await callback.message.answer("Не удалось удалить.")
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("add_vtype_"))

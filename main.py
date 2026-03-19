@@ -8,7 +8,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from bot.handlers import cargo, carrier, profile, start
+from bot.handlers import cargo, carrier, deals, profile, start
 from config import settings
 from models.database import init_db
 
@@ -31,6 +31,7 @@ async def main() -> None:
 
     # Register routers
     dp.include_router(start.router)
+    dp.include_router(deals.router)
     dp.include_router(cargo.router)
     dp.include_router(carrier.router)
     dp.include_router(profile.router)

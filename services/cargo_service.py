@@ -4,7 +4,6 @@ from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from models.entities import (
     Cargo,
@@ -250,3 +249,132 @@ async def get_user_reviews(session: AsyncSession, user_id: int) -> list[dict]:
         {"rating": r.rating, "comment": r.comment}
         for r in result.scalars().all()
     ]
+
+
+# ── Deal queries ───────────────────────────────────────────────────────────
+
+
+async def get_user_deals(session: AsyncSession, user_id: int) -> list[dict]:
+    """Get all deals where user is shipper or carrier."""
+    stmt = (
+        select(Deal, Cargo)
+        .join(Cargo, Deal.cargo_id == Cargo.id)
+        .where((Deal.shipper_id == user_id) | (Deal.carrier_id == user_id))
+        .order_by(Deal.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    deals = []
+    for deal, cargo in result.all():
+        deals.append(
+            {
+                "id": deal.id,
+                "cargo_title": cargo.title,
+                "origin": cargo.origin_city,
+                "destination": cargo.destination_city,
+                "price": deal.agreed_price,
+                "currency": deal.currency,
+                "status": deal.status.value,
+                "shipper_id": deal.shipper_id,
+                "carrier_id": deal.carrier_id,
+                "created_at": str(deal.created_at),
+            }
+        )
+    return deals
+
+
+async def get_deal(session: AsyncSession, deal_id: int) -> Deal | None:
+    stmt = select(Deal).where(Deal.id == deal_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def update_deal_status(
+    session: AsyncSession, deal_id: int, status: DealStatus
+) -> Deal | None:
+    deal = await get_deal(session, deal_id)
+    if deal:
+        deal.status = status
+        # Sync cargo status with deal status
+        stmt = select(Cargo).where(Cargo.id == deal.cargo_id)
+        result = await session.execute(stmt)
+        cargo = result.scalar_one_or_none()
+        if cargo:
+            if status == DealStatus.ACCEPTED:
+                cargo.status = CargoStatus.MATCHED
+            elif status == DealStatus.IN_TRANSIT:
+                cargo.status = CargoStatus.IN_TRANSIT
+            elif status in (DealStatus.DELIVERED, DealStatus.CONFIRMED):
+                cargo.status = CargoStatus.DELIVERED
+            elif status == DealStatus.CANCELLED:
+                cargo.status = CargoStatus.ACTIVE
+        await session.commit()
+        await session.refresh(deal)
+    return deal
+
+
+async def cancel_cargo(session: AsyncSession, cargo_id: int, owner_id: int) -> bool:
+    stmt = select(Cargo).where(Cargo.id == cargo_id, Cargo.owner_id == owner_id)
+    result = await session.execute(stmt)
+    cargo = result.scalar_one_or_none()
+    if cargo and cargo.status == CargoStatus.ACTIVE:
+        cargo.status = CargoStatus.CANCELLED
+        await session.commit()
+        return True
+    return False
+
+
+async def get_user_vehicles(session: AsyncSession, owner_id: int) -> list[Vehicle]:
+    stmt = select(Vehicle).where(Vehicle.owner_id == owner_id)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def delete_vehicle(session: AsyncSession, vehicle_id: int, owner_id: int) -> bool:
+    stmt = select(Vehicle).where(Vehicle.id == vehicle_id, Vehicle.owner_id == owner_id)
+    result = await session.execute(stmt)
+    vehicle = result.scalar_one_or_none()
+    if vehicle:
+        await session.delete(vehicle)
+        await session.commit()
+        return True
+    return False
+
+
+async def get_cargo_by_id(session: AsyncSession, cargo_id: int) -> Cargo | None:
+    stmt = select(Cargo).where(Cargo.id == cargo_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
+    stmt = select(User).where(User.id == user_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def create_review(
+    session: AsyncSession,
+    author_id: int,
+    target_id: int,
+    deal_id: int,
+    rating: int,
+    comment: str | None = None,
+) -> Review:
+    review = Review(
+        author_id=author_id,
+        target_id=target_id,
+        deal_id=deal_id,
+        rating=rating,
+        comment=comment,
+    )
+    session.add(review)
+    # Update target's rating
+    target = await get_user_by_id(session, target_id)
+    if target:
+        reviews = await get_user_reviews(session, target_id)
+        total = sum(r["rating"] for r in reviews) + rating
+        count = len(reviews) + 1
+        target.rating = round(total / count, 1)
+    await session.commit()
+    await session.refresh(review)
+    return review

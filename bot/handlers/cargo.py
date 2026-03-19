@@ -5,7 +5,7 @@ import logging
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from agents.orchestrator import AgentOrchestrator
 from bot.keyboards.main import (
@@ -268,6 +268,7 @@ async def show_my_cargos(message: Message) -> None:
         return
 
     lines = ["📦 <b>Ваши грузы:</b>\n"]
+    buttons = []
     for c in cargos[:10]:
         status_emoji = {
             "active": "🟢",
@@ -280,7 +281,15 @@ async def show_my_cargos(message: Message) -> None:
             f"{status_emoji} #{c.id} {c.title}\n"
             f"   {c.origin_city} → {c.destination_city} | {c.weight_tons} т\n"
         )
-    await message.answer("\n".join(lines), parse_mode="HTML")
+        if c.status.value == "active":
+            buttons.append(
+                [InlineKeyboardButton(
+                    text=f"❌ Отменить #{c.id}",
+                    callback_data=f"cancel_cargo_{c.id}",
+                )]
+            )
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
