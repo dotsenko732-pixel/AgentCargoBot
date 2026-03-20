@@ -1,8 +1,8 @@
-aiogram==3.15.0
-openai==1.58.1
-sqlalchemy[asyncio]==2.0.36
-aiosqlite==0.20.0
-asyncpg==0.30.0
-pydantic==2.10.4
-pydantic-settings==2.7.1
-python-dotenv==1.0.1
+aiogram>=3.15,<4
+openai>=1.58,<2
+sqlalchemy[asyncio]>=2.0,<3
+aiosqlite>=0.20
+asyncpg>=0.30
+pydantic>=2.4,<2.10
+pydantic-settings>=2.7,<3
+python-dotenv>=1.0
