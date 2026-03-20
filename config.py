@@ -3,13 +3,14 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     telegram_bot_token: str = ""
-    anthropic_api_key: str = ""
+    deepseek_api_key: str = ""
     database_url: str = "sqlite+aiosqlite:///./agentcargo.db"
     log_level: str = "INFO"
 
-    # Claude model settings
-    claude_model: str = "claude-sonnet-4-20250514"
-    claude_max_tokens: int = 2048
+    # DeepSeek model settings
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_max_tokens: int = 2048
 
     # Railway injects DATABASE_URL as postgres:// but asyncpg needs postgresql+asyncpg://
     @property

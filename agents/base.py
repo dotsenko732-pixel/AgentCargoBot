@@ -1,9 +1,9 @@
-"""Base agent with Claude API integration."""
+"""Base agent with DeepSeek API integration (OpenAI-compatible)."""
 
 import json
 import logging
 
-import anthropic
+from openai import AsyncOpenAI
 
 from config import settings
 
@@ -14,18 +14,23 @@ class BaseAgent:
     """Base class for all AI agents."""
 
     def __init__(self, system_prompt: str):
-        self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        self.client = AsyncOpenAI(
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_base_url,
+        )
         self.system_prompt = system_prompt
 
     async def ask(self, user_message: str) -> str:
         try:
-            response = await self.client.messages.create(
-                model=settings.claude_model,
-                max_tokens=settings.claude_max_tokens,
-                system=self.system_prompt,
-                messages=[{"role": "user", "content": user_message}],
+            response = await self.client.chat.completions.create(
+                model=settings.deepseek_model,
+                max_tokens=settings.deepseek_max_tokens,
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
             )
-            return response.content[0].text
+            return response.choices[0].message.content
         except Exception as e:
             logger.error("Agent error: %s", e)
             return f"Ошибка агента: {e}"
