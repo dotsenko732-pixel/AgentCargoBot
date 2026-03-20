@@ -10,6 +10,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from agents.orchestrator import AgentOrchestrator
 from bot.keyboards.main import (
     MAIN_MENU_SHIPPER,
+    cargo_actions_keyboard,
+    city_keyboard,
     confirm_keyboard,
     match_results_keyboard,
     vehicle_type_keyboard,
@@ -22,6 +24,7 @@ from services.cargo_service import (
     get_available_vehicles,
     get_user,
     get_user_cargos,
+    repost_cargo,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,7 +35,9 @@ orchestrator = AgentOrchestrator()
 class NewCargo(StatesGroup):
     waiting_title = State()
     waiting_origin = State()
+    waiting_origin_manual = State()
     waiting_destination = State()
+    waiting_destination_manual = State()
     waiting_weight = State()
     waiting_vehicle_type = State()
     waiting_budget = State()
@@ -55,17 +60,56 @@ async def start_cargo_post(message: Message, state: FSMContext) -> None:
 async def on_cargo_title(message: Message, state: FSMContext) -> None:
     await state.update_data(title=message.text)
     await state.set_state(NewCargo.waiting_origin)
-    await message.answer("🏙 Город отправления:")
+    await message.answer(
+        "🏙 Город отправления:",
+        reply_markup=city_keyboard("cargo_origin"),
+    )
+
+
+@router.callback_query(F.data.startswith("cargo_origin_"))
+async def on_cargo_origin_btn(callback: CallbackQuery, state: FSMContext) -> None:
+    city = callback.data.replace("cargo_origin_", "")
+    if city == "manual":
+        await state.set_state(NewCargo.waiting_origin_manual)
+        await callback.message.answer("Введите город отправления:")
+        await callback.answer()
+        return
+    await state.update_data(origin_city=city)
+    await state.set_state(NewCargo.waiting_destination)
+    await callback.message.answer(
+        "🏙 Город назначения:",
+        reply_markup=city_keyboard("cargo_dest"),
+    )
+    await callback.answer()
 
 
 @router.message(NewCargo.waiting_origin)
+@router.message(NewCargo.waiting_origin_manual)
 async def on_cargo_origin(message: Message, state: FSMContext) -> None:
     await state.update_data(origin_city=message.text.strip())
     await state.set_state(NewCargo.waiting_destination)
-    await message.answer("🏙 Город назначения:")
+    await message.answer(
+        "🏙 Город назначения:",
+        reply_markup=city_keyboard("cargo_dest"),
+    )
+
+
+@router.callback_query(F.data.startswith("cargo_dest_"))
+async def on_cargo_dest_btn(callback: CallbackQuery, state: FSMContext) -> None:
+    city = callback.data.replace("cargo_dest_", "")
+    if city == "manual":
+        await state.set_state(NewCargo.waiting_destination_manual)
+        await callback.message.answer("Введите город назначения:")
+        await callback.answer()
+        return
+    await state.update_data(destination_city=city)
+    await state.set_state(NewCargo.waiting_weight)
+    await callback.message.answer("⚖️ Вес груза (в тоннах, например: 5.5):")
+    await callback.answer()
 
 
 @router.message(NewCargo.waiting_destination)
+@router.message(NewCargo.waiting_destination_manual)
 async def on_cargo_destination(message: Message, state: FSMContext) -> None:
     await state.update_data(destination_city=message.text.strip())
     await state.set_state(NewCargo.waiting_weight)
@@ -164,7 +208,6 @@ async def on_cargo_confirmed(callback: CallbackQuery, state: FSMContext) -> None
             budget_max=data.get("budget_max"),
         )
 
-        # Prepare cargo dict for agents
         cargo_data = {
             "title": cargo.title,
             "origin_city": cargo.origin_city,
@@ -268,7 +311,6 @@ async def show_my_cargos(message: Message) -> None:
         return
 
     lines = ["📦 <b>Ваши грузы:</b>\n"]
-    buttons = []
     for c in cargos[:10]:
         status_emoji = {
             "active": "🟢",
@@ -281,15 +323,45 @@ async def show_my_cargos(message: Message) -> None:
             f"{status_emoji} #{c.id} {c.title}\n"
             f"   {c.origin_city} → {c.destination_city} | {c.weight_tons} т\n"
         )
-        if c.status.value == "active":
-            buttons.append(
-                [InlineKeyboardButton(
-                    text=f"❌ Отменить #{c.id}",
-                    callback_data=f"cancel_cargo_{c.id}",
-                )]
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+    # Send action buttons per cargo
+    for c in cargos[:10]:
+        kb = cargo_actions_keyboard(c.id, c.status.value)
+        if kb:
+            await message.answer(
+                f"Действия для #{c.id} «{c.title}»:",
+                reply_markup=kb,
             )
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
+
+
+# ── Repost cargo ──────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data.startswith("repost_cargo_"))
+async def on_repost_cargo(callback: CallbackQuery) -> None:
+    cargo_id = int(callback.data.replace("repost_cargo_", ""))
+
+    async with async_session() as session:
+        user = await get_user(session, callback.from_user.id)
+        if not user:
+            await callback.answer("Ошибка")
+            return
+        new_cargo = await repost_cargo(session, cargo_id, user.id)
+
+    if new_cargo:
+        await callback.message.answer(
+            f"🔄 <b>Груз повторно опубликован!</b>\n\n"
+            f"📦 #{new_cargo.id} {new_cargo.title}\n"
+            f"🏙 {new_cargo.origin_city} → {new_cargo.destination_city}\n"
+            f"⚖️ {new_cargo.weight_tons} т\n\n"
+            f"Перевозчики увидят ваш груз в поиске.",
+            parse_mode="HTML",
+        )
+    else:
+        await callback.message.answer("Не удалось повторить груз.")
+    await callback.answer()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

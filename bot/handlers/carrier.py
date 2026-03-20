@@ -1,4 +1,4 @@
-"""Carrier-side handlers: vehicle management, cargo search."""
+"""Carrier-side handlers: vehicle management, cargo search with filters."""
 
 import logging
 
@@ -10,7 +10,13 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from agents.orchestrator import AgentOrchestrator
-from bot.keyboards.main import MAIN_MENU_CARRIER, cargo_interest_keyboard, vehicle_type_keyboard
+from bot.keyboards.main import (
+    MAIN_MENU_CARRIER,
+    cargo_interest_keyboard,
+    city_keyboard,
+    search_filter_keyboard,
+    vehicle_type_keyboard,
+)
 from models.database import async_session
 from models.entities import VehicleType
 from services.cargo_service import (
@@ -19,6 +25,7 @@ from services.cargo_service import (
     get_active_cargos,
     get_user,
     get_user_vehicles,
+    search_cargos,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,31 +40,163 @@ class AddVehicle(StatesGroup):
     waiting_destination = State()
 
 
-# ── Find cargos (AI-powered search) ───────────────────────────────────────
+class SearchFilter(StatesGroup):
+    waiting_origin = State()
+    waiting_destination = State()
+    waiting_weight = State()
+    waiting_vtype = State()
+
+
+# ── Find cargos (with filter options) ────────────────────────────────────
 
 
 @router.message(F.text == "🚛 Найти грузы")
 async def find_cargos(message: Message) -> None:
-    await message.answer("⏳ AI ищет подходящие грузы для вас...")
-
     async with async_session() as session:
         user = await get_user(session, message.from_user.id)
         if not user:
             await message.answer("Сначала зарегистрируйтесь: /start")
             return
 
-        cargos = await get_active_cargos(session)
+    await message.answer(
+        "🔍 <b>Поиск грузов</b>\n\nВыберите способ поиска:",
+        parse_mode="HTML",
+        reply_markup=search_filter_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "filter_all")
+async def on_filter_all(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _show_cargos(callback.message, cargos=None)
+
+
+@router.callback_query(F.data == "filter_route")
+async def on_filter_route(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SearchFilter.waiting_origin)
+    await callback.message.answer(
+        "🏙 Откуда? (город отправления, или «-» чтобы пропустить):",
+        reply_markup=city_keyboard("search_origin"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("search_origin_"))
+async def on_search_origin_city(callback: CallbackQuery, state: FSMContext) -> None:
+    city = callback.data.replace("search_origin_", "")
+    if city == "manual":
+        await callback.message.answer("Введите город отправления:")
+        await callback.answer()
+        return
+    await state.update_data(search_origin=city)
+    await state.set_state(SearchFilter.waiting_destination)
+    await callback.message.answer(
+        "🏙 Куда? (город назначения, или «-» чтобы пропустить):",
+        reply_markup=city_keyboard("search_dest"),
+    )
+    await callback.answer()
+
+
+@router.message(SearchFilter.waiting_origin)
+async def on_search_origin_text(message: Message, state: FSMContext) -> None:
+    text = message.text.strip()
+    origin = None if text == "-" else text
+    await state.update_data(search_origin=origin)
+    await state.set_state(SearchFilter.waiting_destination)
+    await message.answer(
+        "🏙 Куда? (город назначения, или «-» чтобы пропустить):",
+        reply_markup=city_keyboard("search_dest"),
+    )
+
+
+@router.callback_query(F.data.startswith("search_dest_"))
+async def on_search_dest_city(callback: CallbackQuery, state: FSMContext) -> None:
+    city = callback.data.replace("search_dest_", "")
+    if city == "manual":
+        await callback.message.answer("Введите город назначения:")
+        await callback.answer()
+        return
+    await state.update_data(search_dest=city)
+    await _execute_search(callback.message, state)
+    await callback.answer()
+
+
+@router.message(SearchFilter.waiting_destination)
+async def on_search_dest_text(message: Message, state: FSMContext) -> None:
+    text = message.text.strip()
+    dest = None if text == "-" else text
+    await state.update_data(search_dest=dest)
+    await _execute_search(message, state)
+
+
+@router.callback_query(F.data == "filter_weight")
+async def on_filter_weight(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SearchFilter.waiting_weight)
+    await callback.message.answer(
+        "⚖️ Максимальный вес груза (тонн)?\nНапример: 20"
+    )
+    await callback.answer()
+
+
+@router.message(SearchFilter.waiting_weight)
+async def on_search_weight(message: Message, state: FSMContext) -> None:
+    try:
+        weight = float(message.text.strip().replace(",", "."))
+    except ValueError:
+        await message.answer("Введите число.")
+        return
+    await state.update_data(search_weight=weight)
+    await _execute_search(message, state)
+
+
+@router.callback_query(F.data == "filter_vtype")
+async def on_filter_vtype(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SearchFilter.waiting_vtype)
+    await callback.message.answer(
+        "🚛 Выберите тип кузова:",
+        reply_markup=vehicle_type_keyboard("search_vtype"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("search_vtype_"))
+async def on_search_vtype(callback: CallbackQuery, state: FSMContext) -> None:
+    vtype = callback.data.replace("search_vtype_", "")
+    await state.update_data(search_vtype=vtype if vtype != "any" else None)
+    await _execute_search(callback.message, state)
+    await callback.answer()
+
+
+async def _execute_search(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    await state.clear()
+
+    async with async_session() as session:
+        cargos = await search_cargos(
+            session,
+            origin_city=data.get("search_origin"),
+            destination_city=data.get("search_dest"),
+            max_weight=data.get("search_weight"),
+            vehicle_type=data.get("search_vtype"),
+        )
+
+    await _show_cargos(message, cargos)
+
+
+async def _show_cargos(message: Message, cargos: list[dict] | None = None) -> None:
+    if cargos is None:
+        async with async_session() as session:
+            cargos = await get_active_cargos(session)
 
     if not cargos:
         await message.answer(
-            "🔍 Активных грузов пока нет. Мы уведомим вас, когда появятся!",
+            "🔍 Грузов по вашему запросу не найдено.",
             reply_markup=MAIN_MENU_CARRIER,
         )
         return
 
-    # Format cargo list — send each cargo as separate message with respond button
     await message.answer(
-        f"📦 <b>Доступные грузы ({len(cargos)}):</b>",
+        f"📦 <b>Найдено грузов: {len(cargos)}</b>",
         parse_mode="HTML",
         reply_markup=MAIN_MENU_CARRIER,
     )
@@ -68,7 +207,7 @@ async def find_cargos(message: Message) -> None:
             f"🏙 {c['origin_city']} → {c['destination_city']}\n"
             f"⚖️ {c['weight_tons']} т | 🚛 {c.get('vehicle_type_required') or 'любой'}\n"
             f"💰 {budget}\n"
-            f"👤 {c['owner_name']} (рейтинг {c['owner_rating']})"
+            f"👤 {c['owner_name']} (⭐ {c['owner_rating']})"
         )
         await message.answer(
             text,
@@ -167,7 +306,26 @@ async def on_vehicle_weight(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(max_weight_tons=weight)
     await state.set_state(AddVehicle.waiting_city)
-    await message.answer("🏙 В каком городе сейчас машина?")
+    await message.answer(
+        "🏙 В каком городе сейчас машина?",
+        reply_markup=city_keyboard("veh_city"),
+    )
+
+
+@router.callback_query(F.data.startswith("veh_city_"))
+async def on_vehicle_city_btn(callback: CallbackQuery, state: FSMContext) -> None:
+    city = callback.data.replace("veh_city_", "")
+    if city == "manual":
+        await callback.message.answer("Введите город:")
+        await callback.answer()
+        return
+    await state.update_data(current_city=city)
+    await state.set_state(AddVehicle.waiting_destination)
+    await callback.message.answer(
+        "🏙 Куда готовы ехать? (или «любой»):",
+        reply_markup=city_keyboard("veh_dest"),
+    )
+    await callback.answer()
 
 
 @router.message(AddVehicle.waiting_city)
@@ -175,8 +333,21 @@ async def on_vehicle_city(message: Message, state: FSMContext) -> None:
     await state.update_data(current_city=message.text.strip())
     await state.set_state(AddVehicle.waiting_destination)
     await message.answer(
-        "🏙 Куда готовы ехать? (город назначения, или «любой»):"
+        "🏙 Куда готовы ехать? (город назначения, или «любой»):",
+        reply_markup=city_keyboard("veh_dest"),
     )
+
+
+@router.callback_query(F.data.startswith("veh_dest_"))
+async def on_vehicle_dest_btn(callback: CallbackQuery, state: FSMContext) -> None:
+    city = callback.data.replace("veh_dest_", "")
+    if city == "manual":
+        await callback.message.answer("Введите город назначения (или «любой»):")
+        await callback.answer()
+        return
+    await state.update_data(destination_override=city)
+    await _save_vehicle(callback.message, state, city)
+    await callback.answer()
 
 
 @router.message(AddVehicle.waiting_destination)
@@ -184,6 +355,10 @@ async def on_vehicle_destination(message: Message, state: FSMContext) -> None:
     dest = message.text.strip()
     if dest.lower() in ("любой", "все", "любое"):
         dest = None
+    await _save_vehicle(message, state, dest)
+
+
+async def _save_vehicle(message: Message, state: FSMContext, dest: str | None) -> None:
     data = await state.get_data()
     await state.clear()
 
@@ -207,7 +382,7 @@ async def on_vehicle_destination(message: Message, state: FSMContext) -> None:
         f"🚛 Тип: {data['vehicle_type']}\n"
         f"⚖️ Грузоподъёмность: {data['max_weight_tons']} т\n"
         f"🏙 {data['current_city']} → {dest or 'любое направление'}\n\n"
-        "Теперь AI будет автоматически подбирать грузы для вас!",
+        "AI автоматически подберёт грузы для вас!",
         reply_markup=MAIN_MENU_CARRIER,
     )
 
@@ -229,11 +404,11 @@ async def on_vehicle_destination(message: Message, state: FSMContext) -> None:
             )
             matches = result.get("matches", [])
             if matches:
-                lines = ["🎯 <b>AI нашёл подходящие грузы для вашей машины:</b>\n"]
+                lines = ["🎯 <b>AI нашёл подходящие грузы:</b>\n"]
                 for m in matches[:5]:
                     lines.append(
                         f"  📦 <b>{m.get('carrier_name', 'Груз')}</b> "
-                        f"— совпадение {m.get('score', 0)}%\n"
+                        f"— {m.get('score', 0)}%\n"
                         f"  {m.get('reason', '')}\n"
                     )
                 await message.answer("\n".join(lines), parse_mode="HTML")

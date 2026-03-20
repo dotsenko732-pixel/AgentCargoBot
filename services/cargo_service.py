@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from sqlalchemy import func as sa_func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,6 +69,78 @@ async def get_user(session: AsyncSession, telegram_id: int) -> User | None:
     stmt = select(User).where(User.telegram_id == telegram_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def update_user_company(
+    session: AsyncSession, telegram_id: int, company_name: str
+) -> User | None:
+    stmt = select(User).where(User.telegram_id == telegram_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+    if user:
+        user.company_name = company_name
+        await session.commit()
+    return user
+
+
+async def update_user_name(
+    session: AsyncSession, telegram_id: int, full_name: str
+) -> User | None:
+    stmt = select(User).where(User.telegram_id == telegram_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
+    if user:
+        user.full_name = full_name
+        await session.commit()
+    return user
+
+
+async def get_user_stats(session: AsyncSession, user_id: int) -> dict:
+    """Aggregate stats for a user."""
+    # Count cargos by status
+    cargo_stmt = (
+        select(Cargo.status, sa_func.count())
+        .where(Cargo.owner_id == user_id)
+        .group_by(Cargo.status)
+    )
+    cargo_result = await session.execute(cargo_stmt)
+    cargo_counts = dict(cargo_result.all())
+
+    # Count deals by status
+    deal_stmt = (
+        select(Deal.status, sa_func.count())
+        .where((Deal.shipper_id == user_id) | (Deal.carrier_id == user_id))
+        .group_by(Deal.status)
+    )
+    deal_result = await session.execute(deal_stmt)
+    deal_counts = dict(deal_result.all())
+
+    # Total revenue / spend
+    revenue_stmt = (
+        select(sa_func.coalesce(sa_func.sum(Deal.agreed_price), 0))
+        .where(Deal.carrier_id == user_id)
+        .where(Deal.status == DealStatus.CONFIRMED)
+    )
+    revenue = (await session.execute(revenue_stmt)).scalar() or 0
+
+    spent_stmt = (
+        select(sa_func.coalesce(sa_func.sum(Deal.agreed_price), 0))
+        .where(Deal.shipper_id == user_id)
+        .where(Deal.status == DealStatus.CONFIRMED)
+    )
+    spent = (await session.execute(spent_stmt)).scalar() or 0
+
+    # Vehicle count
+    vehicle_stmt = select(sa_func.count()).where(Vehicle.owner_id == user_id)
+    vehicle_count = (await session.execute(vehicle_stmt)).scalar() or 0
+
+    return {
+        "cargo_counts": cargo_counts,
+        "deal_counts": deal_counts,
+        "revenue": revenue,
+        "spent": spent,
+        "vehicle_count": vehicle_count,
+    }
 
 
 # ── Vehicle operations ─────────────────────────────────────────────────────
@@ -163,6 +236,30 @@ async def create_cargo(
     return cargo
 
 
+async def repost_cargo(session: AsyncSession, cargo_id: int, owner_id: int) -> Cargo | None:
+    """Clone an existing cargo as a new ACTIVE listing."""
+    original = await get_cargo_by_id(session, cargo_id)
+    if not original or original.owner_id != owner_id:
+        return None
+    new_cargo = Cargo(
+        owner_id=owner_id,
+        title=original.title,
+        description=original.description,
+        weight_tons=original.weight_tons,
+        volume_m3=original.volume_m3,
+        vehicle_type_required=original.vehicle_type_required,
+        origin_city=original.origin_city,
+        destination_city=original.destination_city,
+        budget_min=original.budget_min,
+        budget_max=original.budget_max,
+        currency=original.currency,
+    )
+    session.add(new_cargo)
+    await session.commit()
+    await session.refresh(new_cargo)
+    return new_cargo
+
+
 async def get_active_cargos(session: AsyncSession) -> list[dict]:
     stmt = (
         select(Cargo, User)
@@ -180,6 +277,53 @@ async def get_active_cargos(session: AsyncSession) -> list[dict]:
                 "description": cargo.description,
                 "weight_tons": cargo.weight_tons,
                 "volume_m3": cargo.volume_m3,
+                "vehicle_type_required": (
+                    cargo.vehicle_type_required.value
+                    if cargo.vehicle_type_required
+                    else None
+                ),
+                "origin_city": cargo.origin_city,
+                "destination_city": cargo.destination_city,
+                "budget_min": cargo.budget_min,
+                "budget_max": cargo.budget_max,
+                "currency": cargo.currency,
+                "owner_name": user.full_name,
+                "owner_rating": user.rating,
+            }
+        )
+    return cargos
+
+
+async def search_cargos(
+    session: AsyncSession,
+    origin_city: str | None = None,
+    destination_city: str | None = None,
+    max_weight: float | None = None,
+    vehicle_type: str | None = None,
+) -> list[dict]:
+    """Search active cargos with filters."""
+    stmt = (
+        select(Cargo, User)
+        .join(User, Cargo.owner_id == User.id)
+        .where(Cargo.status == CargoStatus.ACTIVE)
+    )
+    if origin_city:
+        stmt = stmt.where(Cargo.origin_city.ilike(f"%{origin_city}%"))
+    if destination_city:
+        stmt = stmt.where(Cargo.destination_city.ilike(f"%{destination_city}%"))
+    if max_weight:
+        stmt = stmt.where(Cargo.weight_tons <= max_weight)
+    if vehicle_type and vehicle_type != "any":
+        stmt = stmt.where(Cargo.vehicle_type_required == VehicleType(vehicle_type))
+    stmt = stmt.order_by(Cargo.created_at.desc())
+    result = await session.execute(stmt)
+    cargos = []
+    for cargo, user in result.all():
+        cargos.append(
+            {
+                "id": cargo.id,
+                "title": cargo.title,
+                "weight_tons": cargo.weight_tons,
                 "vehicle_type_required": (
                     cargo.vehicle_type_required.value
                     if cargo.vehicle_type_required
@@ -237,6 +381,18 @@ async def create_deal(
     return deal
 
 
+async def update_deal_price(
+    session: AsyncSession, deal_id: int, new_price: float
+) -> Deal | None:
+    """Update agreed price for counter-offer."""
+    deal = await get_deal(session, deal_id)
+    if deal:
+        deal.agreed_price = new_price
+        await session.commit()
+        await session.refresh(deal)
+    return deal
+
+
 # ── Review operations ──────────────────────────────────────────────────────
 
 
@@ -249,6 +405,26 @@ async def get_user_reviews(session: AsyncSession, user_id: int) -> list[dict]:
         {"rating": r.rating, "comment": r.comment}
         for r in result.scalars().all()
     ]
+
+
+async def get_user_reviews_detailed(session: AsyncSession, user_id: int) -> list[dict]:
+    """Get reviews with author name."""
+    stmt = (
+        select(Review, User)
+        .join(User, Review.author_id == User.id)
+        .where(Review.target_id == user_id)
+        .order_by(Review.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    reviews = []
+    for review, author in result.all():
+        reviews.append({
+            "rating": review.rating,
+            "comment": review.comment,
+            "author_name": author.full_name,
+            "created_at": str(review.created_at) if review.created_at else "",
+        })
+    return reviews
 
 
 # ── Deal queries ───────────────────────────────────────────────────────────
@@ -268,6 +444,7 @@ async def get_user_deals(session: AsyncSession, user_id: int) -> list[dict]:
         deals.append(
             {
                 "id": deal.id,
+                "cargo_id": deal.cargo_id,
                 "cargo_title": cargo.title,
                 "origin": cargo.origin_city,
                 "destination": cargo.destination_city,

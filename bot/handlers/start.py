@@ -1,4 +1,4 @@
-"""Start and registration handlers."""
+"""Start, registration, and onboarding handlers."""
 
 import logging
 
@@ -48,7 +48,6 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             username=message.from_user.username,
         )
 
-    # Check if already registered
     if user.phone:
         menu = _get_menu(user.role)
         await message.answer(
@@ -96,16 +95,16 @@ async def on_phone_shared(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"✅ Регистрация завершена!\n"
         f"Роль: <b>{_role_label(user.role)}</b>\n"
-        f"Телефон: {phone}\n\n"
-        "Выберите действие:",
+        f"Телефон: {phone}",
         reply_markup=menu,
         parse_mode="HTML",
     )
+    # Send onboarding
+    await _send_onboarding(message, user.role)
 
 
 @router.message(Registration.waiting_phone)
 async def on_phone_text(message: Message, state: FSMContext) -> None:
-    # Accept text phone number too
     text = message.text or ""
     text = text.strip().replace(" ", "").replace("-", "")
     if len(text) >= 9 and (text.startswith("+") or text[0].isdigit()):
@@ -119,10 +118,45 @@ async def on_phone_text(message: Message, state: FSMContext) -> None:
             reply_markup=menu,
             parse_mode="HTML",
         )
+        await _send_onboarding(message, user.role)
     else:
         await message.answer(
             "Пожалуйста, отправьте корректный номер телефона или нажмите кнопку ниже.",
             reply_markup=PHONE_KEYBOARD,
+        )
+
+
+async def _send_onboarding(message: Message, role: UserRole) -> None:
+    """Send role-specific onboarding tutorial."""
+    if role in (UserRole.SHIPPER, UserRole.BOTH):
+        await message.answer(
+            "📖 <b>Быстрый старт для грузовладельца:</b>\n\n"
+            "<b>Шаг 1.</b> Нажмите «📦 Разместить груз»\n"
+            "Опишите груз, маршрут, вес и бюджет.\n\n"
+            "<b>Шаг 2.</b> AI подберёт перевозчиков\n"
+            "Вы увидите оценку рынка, список перевозчиков и их надёжность.\n\n"
+            "<b>Шаг 3.</b> Выберите перевозчика и предложите цену\n"
+            "Перевозчик получит уведомление и может принять, отклонить или предложить встречную цену.\n\n"
+            "<b>Шаг 4.</b> Следите за сделкой в «📊 Мои сделки»\n"
+            "Статусы: предложена → принята → в пути → доставлено → завершена.\n\n"
+            "💡 <b>Совет:</b> заполните профиль и название компании — это повышает доверие!",
+            parse_mode="HTML",
+        )
+
+    if role in (UserRole.CARRIER, UserRole.BOTH):
+        await message.answer(
+            "📖 <b>Быстрый старт для перевозчика:</b>\n\n"
+            "<b>Шаг 1.</b> Добавьте машину в «🅿️ Мои машины»\n"
+            "AI автоматически начнёт подбирать грузы.\n\n"
+            "<b>Шаг 2.</b> Ищите грузы в «🚛 Найти грузы»\n"
+            "Фильтруйте по маршруту, весу или типу кузова.\n\n"
+            "<b>Шаг 3.</b> Откликнитесь или предложите свою цену\n"
+            "Кнопка «💰 Предложить цену» — ваше ценовое предложение.\n"
+            "Кнопка «📩 Откликнуться» — просто выразить интерес.\n\n"
+            "<b>Шаг 4.</b> Управляйте сделками в «📊 Мои сделки»\n"
+            "Принимайте, торгуйтесь, отмечайте доставку.\n\n"
+            "💡 <b>Совет:</b> пройдите верификацию в профиле — это даёт приоритет в AI-подборе!",
+            parse_mode="HTML",
         )
 
 

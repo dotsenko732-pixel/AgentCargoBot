@@ -127,12 +127,141 @@ def match_results_keyboard(matches: list[dict], cargo_id: int = 0) -> InlineKeyb
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+# ── Carrier cargo actions ─────────────────────────────────────────────────
+
+
 def cargo_interest_keyboard(cargo_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💰 Предложить цену",
+                    callback_data=f"bid_cargo_{cargo_id}",
+                ),
+                InlineKeyboardButton(
+                    text="📩 Откликнуться",
+                    callback_data=f"respond_cargo_{cargo_id}",
+                ),
+            ]
+        ]
+    )
+
+
+# ── Deal action buttons for carrier (accept / counter / reject) ──────────
+
+
+def deal_response_keyboard(deal_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Принять",
+                    callback_data=f"accept_deal_{deal_id}",
+                ),
+                InlineKeyboardButton(
+                    text="💰 Встречная цена",
+                    callback_data=f"counter_deal_{deal_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отклонить",
+                    callback_data=f"reject_deal_{deal_id}",
+                ),
+            ],
+        ]
+    )
+
+
+# ── Popular CIS cities ───────────────────────────────────────────────────
+
+
+CIS_CITIES = [
+    "Бишкек", "Ош", "Джалал-Абад", "Каракол", "Токмок",
+    "Алматы", "Нур-Султан", "Шымкент", "Караганда",
+    "Ташкент", "Самарканд",
+    "Москва", "Новосибирск", "Екатеринбург", "Казань",
+    "Душанбе", "Худжанд",
+]
+
+
+def city_keyboard(prefix: str) -> InlineKeyboardMarkup:
+    buttons = []
+    row = []
+    for city in CIS_CITIES:
+        row.append(
+            InlineKeyboardButton(text=city, callback_data=f"{prefix}_{city}")
+        )
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append(
+        [InlineKeyboardButton(text="✏️ Ввести вручную", callback_data=f"{prefix}_manual")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# ── Profile action buttons ────────────────────────────────────────────────
+
+
+def profile_keyboard(is_verified: bool) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(text="⭐ Мои отзывы", callback_data="my_reviews"),
+            InlineKeyboardButton(text="📊 Статистика", callback_data="my_stats"),
+        ],
+        [
+            InlineKeyboardButton(text="🏢 Компания", callback_data="edit_company"),
+            InlineKeyboardButton(text="✏️ Имя", callback_data="edit_name"),
+        ],
+    ]
+    if not is_verified:
+        buttons.append(
             [InlineKeyboardButton(
-                text="📩 Откликнуться",
-                callback_data=f"respond_cargo_{cargo_id}",
+                text="✅ Запросить верификацию",
+                callback_data="request_verify",
             )]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# ── Cargo repost button ──────────────────────────────────────────────────
+
+
+def cargo_actions_keyboard(cargo_id: int, status: str) -> InlineKeyboardMarkup:
+    buttons = []
+    if status == "active":
+        buttons.append(
+            [InlineKeyboardButton(
+                text=f"❌ Отменить #{cargo_id}",
+                callback_data=f"cancel_cargo_{cargo_id}",
+            )]
+        )
+    if status in ("delivered", "cancelled", "active"):
+        buttons.append(
+            [InlineKeyboardButton(
+                text=f"🔄 Повторить #{cargo_id}",
+                callback_data=f"repost_cargo_{cargo_id}",
+            )]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+
+
+# ── Search filter keyboard ────────────────────────────────────────────────
+
+
+def search_filter_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🏙 По маршруту", callback_data="filter_route"),
+                InlineKeyboardButton(text="⚖️ По весу", callback_data="filter_weight"),
+            ],
+            [
+                InlineKeyboardButton(text="🚛 По кузову", callback_data="filter_vtype"),
+                InlineKeyboardButton(text="📋 Все грузы", callback_data="filter_all"),
+            ],
         ]
     )
