@@ -9,6 +9,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from bot.keyboards.main import (
+    MAIN_MENU_BOTH,
     MAIN_MENU_CARRIER,
     MAIN_MENU_SHIPPER,
     PHONE_KEYBOARD,
@@ -128,7 +129,9 @@ async def on_phone_text(message: Message, state: FSMContext) -> None:
 def _get_menu(role: UserRole):
     if role == UserRole.CARRIER:
         return MAIN_MENU_CARRIER
-    return MAIN_MENU_SHIPPER  # shipper or both get shipper menu
+    if role == UserRole.BOTH:
+        return MAIN_MENU_BOTH
+    return MAIN_MENU_SHIPPER
 
 
 def _role_label(role: UserRole) -> str:

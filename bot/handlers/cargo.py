@@ -229,7 +229,7 @@ async def on_cargo_confirmed(callback: CallbackQuery, state: FSMContext) -> None
         text = "\n".join(response_parts)
         await callback.message.answer(
             text,
-            reply_markup=match_results_keyboard(matches),
+            reply_markup=match_results_keyboard(matches, cargo.id),
             parse_mode="HTML",
         )
     else:

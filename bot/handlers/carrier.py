@@ -10,7 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from agents.orchestrator import AgentOrchestrator
-from bot.keyboards.main import MAIN_MENU_CARRIER, vehicle_type_keyboard
+from bot.keyboards.main import MAIN_MENU_CARRIER, cargo_interest_keyboard, vehicle_type_keyboard
 from models.database import async_session
 from models.entities import VehicleType
 from services.cargo_service import (
@@ -55,19 +55,26 @@ async def find_cargos(message: Message) -> None:
         )
         return
 
-    # Format cargo list
-    lines = [f"📦 <b>Доступные грузы ({len(cargos)}):</b>\n"]
-    for c in cargos[:15]:
+    # Format cargo list — send each cargo as separate message with respond button
+    await message.answer(
+        f"📦 <b>Доступные грузы ({len(cargos)}):</b>",
+        parse_mode="HTML",
+        reply_markup=MAIN_MENU_CARRIER,
+    )
+    for c in cargos[:10]:
         budget = _fmt_budget(c.get("budget_min"), c.get("budget_max"))
-        lines.append(
-            f"  #{c['id']} <b>{c['title']}</b>\n"
-            f"  🏙 {c['origin_city']} → {c['destination_city']}\n"
-            f"  ⚖️ {c['weight_tons']} т | 🚛 {c.get('vehicle_type_required') or 'любой'}\n"
-            f"  💰 {budget}\n"
-            f"  👤 {c['owner_name']} (рейтинг {c['owner_rating']})\n"
+        text = (
+            f"#{c['id']} <b>{c['title']}</b>\n"
+            f"🏙 {c['origin_city']} → {c['destination_city']}\n"
+            f"⚖️ {c['weight_tons']} т | 🚛 {c.get('vehicle_type_required') or 'любой'}\n"
+            f"💰 {budget}\n"
+            f"👤 {c['owner_name']} (рейтинг {c['owner_rating']})"
         )
-
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=MAIN_MENU_CARRIER)
+        await message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=cargo_interest_keyboard(c["id"]),
+        )
 
 
 # ── Add vehicle flow ───────────────────────────────────────────────────────

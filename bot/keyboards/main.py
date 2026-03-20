@@ -29,6 +29,16 @@ MAIN_MENU_CARRIER = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+MAIN_MENU_BOTH = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📦 Разместить груз"), KeyboardButton(text="🚛 Найти грузы")],
+        [KeyboardButton(text="🔍 Мои грузы"), KeyboardButton(text="🅿️ Мои машины")],
+        [KeyboardButton(text="📊 Мои сделки")],
+        [KeyboardButton(text="👤 Профиль"), KeyboardButton(text="ℹ️ Помощь")],
+    ],
+    resize_keyboard=True,
+)
+
 # ── Role selection ─────────────────────────────────────────────────────────
 
 ROLE_KEYBOARD = InlineKeyboardMarkup(
@@ -100,7 +110,7 @@ def confirm_keyboard(prefix: str) -> InlineKeyboardMarkup:
 # ── Match results ──────────────────────────────────────────────────────────
 
 
-def match_results_keyboard(matches: list[dict]) -> InlineKeyboardMarkup:
+def match_results_keyboard(matches: list[dict], cargo_id: int = 0) -> InlineKeyboardMarkup:
     buttons = []
     for m in matches[:7]:
         vid = m.get("vehicle_id", 0)
@@ -109,9 +119,20 @@ def match_results_keyboard(matches: list[dict]) -> InlineKeyboardMarkup:
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=f"🚛 {name} (совпадение {score}%)",
-                    callback_data=f"select_carrier_{vid}",
+                    text=f"🚛 {name} ({score}%)",
+                    callback_data=f"selcar_{cargo_id}_{vid}",
                 )
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def cargo_interest_keyboard(cargo_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📩 Откликнуться",
+                callback_data=f"respond_cargo_{cargo_id}",
+            )]
+        ]
+    )

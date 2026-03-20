@@ -352,6 +352,26 @@ async def get_user_by_id(session: AsyncSession, user_id: int) -> User | None:
     return result.scalar_one_or_none()
 
 
+async def get_vehicle_with_owner(
+    session: AsyncSession, vehicle_id: int
+) -> tuple[Vehicle, User] | None:
+    stmt = (
+        select(Vehicle, User)
+        .join(User, Vehicle.owner_id == User.id)
+        .where(Vehicle.id == vehicle_id)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    return (row[0], row[1]) if row else None
+
+
+async def increment_total_deals(session: AsyncSession, user_id: int) -> None:
+    user = await get_user_by_id(session, user_id)
+    if user:
+        user.total_deals += 1
+        await session.commit()
+
+
 async def create_review(
     session: AsyncSession,
     author_id: int,
