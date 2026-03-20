@@ -12,8 +12,8 @@ class Base(DeclarativeBase):
 
 
 async def init_db() -> None:
+    import models.entities  # noqa: F401 — register all models with Base.metadata
     async with engine.begin() as conn:
-        from models.entities import *  # noqa: F401,F403
         await conn.run_sync(Base.metadata.create_all)
 
 
