@@ -33,7 +33,7 @@ class BaseAgent:
             return response.choices[0].message.content
         except Exception as e:
             logger.error("Agent error: %s", e)
-            return f"Ошибка агента: {e}"
+            raise
 
     async def ask_json(self, user_message: str) -> dict:
         raw = await self.ask(user_message)

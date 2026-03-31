@@ -20,6 +20,7 @@ from services.cargo_service import (
     get_user,
     get_user_by_id,
     get_user_deals,
+    get_user_reviews,
     get_vehicle_with_owner,
     increment_total_deals,
     update_deal_price,
@@ -76,15 +77,14 @@ async def on_select_carrier(callback: CallbackQuery, state: FSMContext) -> None:
     async with async_session() as session:
         cargo = await get_cargo_by_id(session, cargo_id)
         veh_data = await get_vehicle_with_owner(session, vehicle_id)
+        if not cargo or not veh_data:
+            await callback.message.answer("Груз или перевозчик не найден.")
+            await callback.answer()
+            return
+        vehicle, owner = veh_data
+        owner_reviews = await get_user_reviews(session, owner.id)
 
-    if not cargo or not veh_data:
-        await callback.message.answer("Груз или перевозчик не найден.")
-        await callback.answer()
-        return
-
-    vehicle, owner = veh_data
-
-    # Run risk assessment
+    # Run risk assessment with real reviews
     risk_text = ""
     try:
         carrier_data = {
@@ -94,7 +94,7 @@ async def on_select_carrier(callback: CallbackQuery, state: FSMContext) -> None:
             "is_verified": owner.is_verified,
             "created_at": str(owner.created_at),
         }
-        risk_result = await orchestrator.risk.assess_carrier(carrier_data, reviews=[])
+        risk_result = await orchestrator.risk.assess_carrier(carrier_data, reviews=owner_reviews)
         risk_level = risk_result.get("risk_level", "N/A")
         risk_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(risk_level, "⚪")
         risk_text = (
@@ -573,7 +573,8 @@ async def on_accept_deal(callback: CallbackQuery) -> None:
     await callback.answer()
 
     # Notify other party with contacts
-    user = await _get_user_safe(session, callback.from_user.id)
+    async with async_session() as session:
+        user = await get_user(session, callback.from_user.id)
     other_id = deal.shipper_id if (user and user.id == deal.carrier_id) else deal.carrier_id
     other = shipper if other_id == deal.shipper_id else carrier
     if other:
@@ -696,26 +697,38 @@ async def on_confirm_deal(callback: CallbackQuery, state: FSMContext) -> None:
             return
         await increment_total_deals(session, deal.shipper_id)
         await increment_total_deals(session, deal.carrier_id)
+        confirmer = await get_user(session, callback.from_user.id)
+        shipper = await get_user_by_id(session, deal.shipper_id)
         carrier = await get_user_by_id(session, deal.carrier_id)
 
-    await state.update_data(review_deal_id=deal_id, review_target_id=deal.carrier_id)
+    # Determine review target based on who is confirming
+    if confirmer and confirmer.id == deal.shipper_id:
+        review_target_id = deal.carrier_id
+        other_party = carrier
+        review_label = "перевозчика"
+    else:
+        review_target_id = deal.shipper_id
+        other_party = shipper
+        review_label = "заказчика"
+
+    await state.update_data(review_deal_id=deal_id, review_target_id=review_target_id)
     await state.set_state(ReviewFlow.waiting_rating)
     await callback.message.answer(
         f"🤝 Сделка #{deal_id} завершена!\n\n"
-        "Оцените перевозчика от 1 до 5:"
+        f"Оцените {review_label} от 1 до 5:"
     )
     await callback.answer()
 
-    if carrier:
+    if other_party:
         try:
             await callback.bot.send_message(
-                carrier.telegram_id,
+                other_party.telegram_id,
                 f"🤝 <b>Сделка #{deal_id} завершена!</b>\n"
-                f"Заказчик подтвердил получение. Отличная работа!",
+                f"Получение подтверждено. Отличная работа!",
                 parse_mode="HTML",
             )
         except Exception as e:
-            logger.error("Notify carrier error: %s", e)
+            logger.error("Notify deal confirmed error: %s", e)
 
 
 # ── Dispute flow ──────────────────────────────────────────────────────────
@@ -837,7 +850,3 @@ async def on_cancel_cargo(callback: CallbackQuery) -> None:
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-async def _get_user_safe(session, telegram_id: int):
-    """Get user within an existing or new session."""
-    async with async_session() as s:
-        return await get_user(s, telegram_id)

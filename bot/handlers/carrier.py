@@ -85,6 +85,7 @@ async def on_filter_route(callback: CallbackQuery, state: FSMContext) -> None:
 async def on_search_origin_city(callback: CallbackQuery, state: FSMContext) -> None:
     city = callback.data.replace("search_origin_", "")
     if city == "manual":
+        await state.set_state(SearchFilter.waiting_origin)
         await callback.message.answer("Введите город отправления:")
         await callback.answer()
         return
@@ -113,6 +114,7 @@ async def on_search_origin_text(message: Message, state: FSMContext) -> None:
 async def on_search_dest_city(callback: CallbackQuery, state: FSMContext) -> None:
     city = callback.data.replace("search_dest_", "")
     if city == "manual":
+        await state.set_state(SearchFilter.waiting_destination)
         await callback.message.answer("Введите город назначения:")
         await callback.answer()
         return
@@ -407,7 +409,7 @@ async def _save_vehicle(message: Message, state: FSMContext, dest: str | None) -
                 lines = ["🎯 <b>AI нашёл подходящие грузы:</b>\n"]
                 for m in matches[:5]:
                     lines.append(
-                        f"  📦 <b>{m.get('carrier_name', 'Груз')}</b> "
+                        f"  📦 <b>{m.get('title', m.get('cargo_title', 'Груз'))}</b> "
                         f"— {m.get('score', 0)}%\n"
                         f"  {m.get('reason', '')}\n"
                     )
