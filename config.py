@@ -12,6 +12,19 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     deepseek_max_tokens: int = 2048
 
+    # Telegram Payments (provider token from @BotFather → Payments)
+    payment_provider_token: str = ""
+
+    # Monetization settings
+    free_cargo_limit: int = 3  # cargos per month for free users
+    commission_rate: float = 0.02  # 2% commission on deals
+    promo_price_kgs: int = 150  # boost cargo price in KGS
+    verify_price_kgs: int = 500  # paid verification price in KGS
+
+    # Subscription prices (KGS per month)
+    standard_price_kgs: int = 990
+    business_price_kgs: int = 2990
+
     # Railway injects DATABASE_URL as postgres:// but asyncpg needs postgresql+asyncpg://
     @property
     def async_database_url(self) -> str:

@@ -14,6 +14,8 @@ from bot.keyboards.main import (
     city_keyboard,
     confirm_keyboard,
     match_results_keyboard,
+    promote_cargo_keyboard,
+    subscription_keyboard,
     vehicle_type_keyboard,
 )
 from models.database import async_session
@@ -26,6 +28,7 @@ from services.cargo_service import (
     get_user_cargos,
     repost_cargo,
 )
+from services.payment_service import can_post_cargo, increment_cargo_count
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -49,6 +52,22 @@ class NewCargo(StatesGroup):
 
 @router.message(F.text == "📦 Разместить груз")
 async def start_cargo_post(message: Message, state: FSMContext) -> None:
+    # Check subscription limits
+    async with async_session() as session:
+        user = await get_user(session, message.from_user.id)
+        if not user:
+            await message.answer("Сначала зарегистрируйтесь: /start")
+            return
+        if not can_post_cargo(user):
+            await message.answer(
+                f"📦 <b>Лимит исчерпан</b>\n\n"
+                f"На бесплатном тарифе доступно {user.cargos_this_month} из 3 грузов в месяц.\n\n"
+                f"Оформите подписку для безлимитного размещения:",
+                parse_mode="HTML",
+                reply_markup=subscription_keyboard("free"),
+            )
+            return
+
     await state.set_state(NewCargo.waiting_title)
     await message.answer(
         "📦 <b>Новый груз</b>\n\nОпишите груз кратко (например: «Мебель, 5 палет»):",
@@ -208,6 +227,9 @@ async def on_cargo_confirmed(callback: CallbackQuery, state: FSMContext) -> None
             budget_max=data.get("budget_max"),
         )
 
+        # Track monthly usage
+        await increment_cargo_count(session, user)
+
         cargo_data = {
             "title": cargo.title,
             "origin_city": cargo.origin_city,
@@ -330,9 +352,16 @@ async def show_my_cargos(message: Message) -> None:
     for c in cargos[:10]:
         kb = cargo_actions_keyboard(c.id, c.status.value)
         if kb:
+            promo_label = " 🚀" if c.is_promoted else ""
             await message.answer(
-                f"Действия для #{c.id} «{c.title}»:",
+                f"Действия для #{c.id} «{c.title}»{promo_label}:",
                 reply_markup=kb,
+            )
+        # Offer promotion for active non-promoted cargos
+        if c.status.value == "active" and not c.is_promoted:
+            await message.answer(
+                f"🚀 Поднять «{c.title}» в топ выдачи?",
+                reply_markup=promote_cargo_keyboard(c.id),
             )
 
 

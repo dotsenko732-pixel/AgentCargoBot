@@ -26,6 +26,7 @@ from services.cargo_service import (
     update_deal_price,
     update_deal_status,
 )
+from services.payment_service import calculate_commission, charge_commission
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -697,9 +698,18 @@ async def on_confirm_deal(callback: CallbackQuery, state: FSMContext) -> None:
             return
         await increment_total_deals(session, deal.shipper_id)
         await increment_total_deals(session, deal.carrier_id)
+        # Charge platform commission
+        commission_payment = await charge_commission(session, deal_id)
         confirmer = await get_user(session, callback.from_user.id)
         shipper = await get_user_by_id(session, deal.shipper_id)
         carrier = await get_user_by_id(session, deal.carrier_id)
+
+    # Commission info
+    commission_text = ""
+    if commission_payment:
+        commission_text = (
+            f"\n📊 Комиссия платформы: {int(commission_payment.amount)} сом"
+        )
 
     # Determine review target based on who is confirming
     if confirmer and confirmer.id == deal.shipper_id:
@@ -714,7 +724,7 @@ async def on_confirm_deal(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(review_deal_id=deal_id, review_target_id=review_target_id)
     await state.set_state(ReviewFlow.waiting_rating)
     await callback.message.answer(
-        f"🤝 Сделка #{deal_id} завершена!\n\n"
+        f"🤝 Сделка #{deal_id} завершена!{commission_text}\n\n"
         f"Оцените {review_label} от 1 до 5:"
     )
     await callback.answer()

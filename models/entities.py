@@ -58,6 +58,26 @@ class DealStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+class SubscriptionPlan(str, enum.Enum):
+    FREE = "free"
+    STANDARD = "standard"  # 990 сом/мес
+    BUSINESS = "business"  # 2990 сом/мес
+
+
+class PaymentType(str, enum.Enum):
+    SUBSCRIPTION = "subscription"
+    PROMO_BOOST = "promo_boost"
+    VERIFICATION = "verification"
+    COMMISSION = "commission"
+
+
+class PaymentStatus(str, enum.Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    REFUNDED = "refunded"
+    FAILED = "failed"
+
+
 # ── Models ─────────────────────────────────────────────────────────────────
 
 
@@ -74,6 +94,14 @@ class User(Base):
     rating: Mapped[float] = mapped_column(Float, default=0.0)
     total_deals: Mapped[int] = mapped_column(Integer, default=0)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    subscription_plan: Mapped[SubscriptionPlan] = mapped_column(
+        Enum(SubscriptionPlan), default=SubscriptionPlan.FREE
+    )
+    subscription_until: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    cargos_this_month: Mapped[int] = mapped_column(Integer, default=0)
+    month_reset: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -134,6 +162,8 @@ class Cargo(Base):
     status: Mapped[CargoStatus] = mapped_column(
         Enum(CargoStatus), default=CargoStatus.ACTIVE
     )
+    is_promoted: Mapped[bool] = mapped_column(Boolean, default=False)
+    promoted_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -154,6 +184,8 @@ class Deal(Base):
     status: Mapped[DealStatus] = mapped_column(
         Enum(DealStatus), default=DealStatus.PROPOSED
     )
+    commission_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    commission_paid: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -182,3 +214,25 @@ class Review(Base):
     target: Mapped["User"] = relationship(
         back_populates="reviews_received", foreign_keys=[target_id]
     )
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    payment_type: Mapped[PaymentType] = mapped_column(Enum(PaymentType))
+    amount: Mapped[float] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(10), default="KGS")
+    status: Mapped[PaymentStatus] = mapped_column(
+        Enum(PaymentStatus), default=PaymentStatus.PENDING
+    )
+    telegram_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Reference to related entity (deal_id, cargo_id, etc.)
+    reference_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(foreign_keys=[user_id])

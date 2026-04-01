@@ -265,7 +265,7 @@ async def get_active_cargos(session: AsyncSession) -> list[dict]:
         select(Cargo, User)
         .join(User, Cargo.owner_id == User.id)
         .where(Cargo.status == CargoStatus.ACTIVE)
-        .order_by(Cargo.created_at.desc())
+        .order_by(Cargo.is_promoted.desc(), Cargo.created_at.desc())
     )
     result = await session.execute(stmt)
     cargos = []
@@ -315,7 +315,7 @@ async def search_cargos(
         stmt = stmt.where(Cargo.weight_tons <= max_weight)
     if vehicle_type and vehicle_type != "any":
         stmt = stmt.where(Cargo.vehicle_type_required == VehicleType(vehicle_type))
-    stmt = stmt.order_by(Cargo.created_at.desc())
+    stmt = stmt.order_by(Cargo.is_promoted.desc(), Cargo.created_at.desc())
     result = await session.execute(stmt)
     cargos = []
     for cargo, user in result.all():

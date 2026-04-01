@@ -216,12 +216,16 @@ def profile_keyboard(is_verified: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🏢 Компания", callback_data="edit_company"),
             InlineKeyboardButton(text="✏️ Имя", callback_data="edit_name"),
         ],
+        [
+            InlineKeyboardButton(text="💎 Подписка", callback_data="my_subscription"),
+            InlineKeyboardButton(text="💳 Платежи", callback_data="payment_history"),
+        ],
     ]
     if not is_verified:
         buttons.append(
             [InlineKeyboardButton(
-                text="✅ Запросить верификацию",
-                callback_data="request_verify",
+                text="✅ Верификация — 500 сом",
+                callback_data="buy_verification",
             )]
         )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -262,6 +266,78 @@ def search_filter_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="🚛 По кузову", callback_data="filter_vtype"),
                 InlineKeyboardButton(text="📋 Все грузы", callback_data="filter_all"),
+            ],
+        ]
+    )
+
+
+# ── Subscription plans keyboard ─────────────────────────────────────────────
+
+
+def subscription_keyboard(current_plan: str = "free") -> InlineKeyboardMarkup:
+    buttons = []
+    if current_plan != "standard":
+        buttons.append(
+            [InlineKeyboardButton(
+                text="🥈 Стандарт — 990 сом/мес",
+                callback_data="buy_sub_standard",
+            )]
+        )
+    if current_plan != "business":
+        buttons.append(
+            [InlineKeyboardButton(
+                text="🥇 Бизнес — 2990 сом/мес",
+                callback_data="buy_sub_business",
+            )]
+        )
+    if current_plan != "free":
+        buttons.append(
+            [InlineKeyboardButton(
+                text="📋 История платежей",
+                callback_data="payment_history",
+            )]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def promote_cargo_keyboard(cargo_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🚀 Поднять в топ — 150 сом",
+                callback_data=f"promote_cargo_{cargo_id}",
+            )],
+        ]
+    )
+
+
+def payment_confirm_keyboard(payment_type: str, ref_id: int = 0) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить",
+                    callback_data=f"pay_confirm_{payment_type}_{ref_id}",
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="pay_cancel",
+                ),
+            ]
+        ]
+    )
+
+
+def admin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="💰 Доходы", callback_data="admin_revenue"),
+                InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"),
+            ],
+            [
+                InlineKeyboardButton(text="📊 Сделки", callback_data="admin_deals"),
+                InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_refresh"),
             ],
         ]
     )

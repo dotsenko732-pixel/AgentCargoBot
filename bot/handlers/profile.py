@@ -16,6 +16,7 @@ from services.cargo_service import (
     update_user_company,
     update_user_name,
 )
+from services.payment_service import get_subscription_info
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -44,10 +45,28 @@ async def show_profile(message: Message) -> None:
         await message.answer("Вы не зарегистрированы. Нажмите /start")
         return
 
+    async with async_session() as session:
+        sub_info = await get_subscription_info(session, user.id)
+
+    PLAN_LABELS = {
+        "free": "🆓 Бесплатный",
+        "standard": "🥈 Стандарт",
+        "business": "🥇 Бизнес",
+    }
+
     verified = "✅ Верифицирован" if user.is_verified else "⚠️ Не верифицирован"
     stars = "⭐" * max(1, int(user.rating)) if user.rating > 0 else "нет оценок"
     company = f"\n🏢 Компания: {user.company_name}" if user.company_name else ""
     username = f"\n🔗 @{user.username}" if user.username else ""
+
+    plan_label = PLAN_LABELS.get(sub_info.get("plan", "free"), "🆓 Бесплатный")
+    sub_line = f"\n💎 Подписка: {plan_label}"
+    if sub_info.get("active") and sub_info.get("until"):
+        sub_line += f" (до {sub_info['until']})"
+
+    limit = sub_info.get("cargos_limit")
+    used = sub_info.get("cargos_used", 0)
+    cargo_line = f"\n📦 Грузов в этом месяце: {used}" + (f"/{limit}" if limit else " (безлимит)")
 
     await message.answer(
         f"👤 <b>Ваш профиль</b>\n\n"
@@ -56,7 +75,8 @@ async def show_profile(message: Message) -> None:
         f"Роль: {ROLE_LABELS.get(user.role.value, user.role.value)}\n"
         f"⭐ Рейтинг: {stars} ({user.rating:.1f})\n"
         f"📊 Сделок: {user.total_deals}\n"
-        f"Статус: {verified}\n"
+        f"Статус: {verified}"
+        f"{sub_line}{cargo_line}\n"
         f"📅 Регистрация: {str(user.created_at)[:10] if user.created_at else 'N/A'}",
         parse_mode="HTML",
         reply_markup=profile_keyboard(user.is_verified),
@@ -257,9 +277,16 @@ async def show_help(message: Message) -> None:
         "🎯 Agent-Matcher — подбор за 15 секунд\n"
         "💰 Agent-Pricer — справедливая цена рынка\n"
         "🛡 Agent-Risk — проверка надёжности\n\n"
+        "<b>Тарифы:</b>\n"
+        "🆓 Бесплатный — 3 груза/мес, базовый поиск\n"
+        "🥈 Стандарт (990 сом/мес) — безлимит, AI-подбор, приоритет\n"
+        "🥇 Бизнес (2990 сом/мес) — всё + аналитика, VIP, API\n"
+        "🚀 Продвижение груза — 150 сом (топ на 24ч)\n"
+        "✅ Верификация — 500 сом (зелёная галочка)\n\n"
         "<b>Профиль:</b>\n"
-        "👤 Профиль — статистика, отзывы, верификация\n"
-        "🏢 Компания — добавьте название для доверия\n\n"
+        "👤 Профиль — статистика, отзывы, подписка\n"
+        "💎 Подписка — управление тарифом\n"
+        "💳 Платежи — история операций\n\n"
         "Поддержка: @AgentCargoBot_support",
         parse_mode="HTML",
     )
